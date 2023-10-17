@@ -1,36 +1,34 @@
-# model.py
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class SingerClassifier(nn.Module):
     def __init__(self):
         super(SingerClassifier, self).__init__()
-        # Adjusting for 1D convolution here
-        self.conv1 = nn.Conv1d(1, 32, kernel_size=5)  # assuming your input data is 1-dimensional
+        self.conv1 = nn.Conv1d(13, 32, kernel_size=5)
         self.conv2 = nn.Conv1d(32, 64, kernel_size=5)
         self.dropout = nn.Dropout(0.5)
-
-        # You will need to adjust the input features for fc1 depending on your actual data's size after convolution and pooling layers
-        self.fc1 = nn.Linear(64 * 5 * 5, 1000)  # This needs to be adjusted based on the output from the last convolution/pooling layer
-        self.fc2 = nn.Linear(1000, 5)  # assuming 5 different singers
-
-    def forward(self, x):
-        # Note: If you're working with raw audio, the input x here should be a 1D tensor representing your audio data
-
-        # Adjusting for 1D operations
+        
+        # Dummy forward pass to calculate the size
+        x = torch.randn(1, 13, 222389)  # Random 'dummy' input
         x = self.conv1(x)
-        x = F.relu(x)
         x = F.max_pool1d(x, 2)
         x = self.conv2(x)
-        x = F.relu(x)
         x = F.max_pool1d(x, 2)
+        self.flattened_size = x.numel()  # Number of elements in x
 
-        # Flattening the tensor
-        x = x.view(x.size(0), -1)  # you might need to adjust the shape based on your actual data structure
+        # Now that we know the size, we can create the fully connected layers
+        self.fc1 = nn.Linear(self.flattened_size, 1000)
+        self.fc2 = nn.Linear(1000, 5)  # Adjust 5 to match the number of your target classes
 
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.max_pool1d(x, 2)
+        x = F.relu(self.conv2(x))
+        x = F.max_pool1d(x, 2)
+        x = x.view(-1, self.flattened_size)  # Flatten the output for the fully connected layers
         x = self.dropout(x)
-        x = self.fc1(x)
-        x = F.relu(x)
+        x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
 

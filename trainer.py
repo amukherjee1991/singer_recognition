@@ -1,96 +1,94 @@
+import os
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import os
-import pickle
+from torch.optim import Adam
+import model  # Assuming model.py is in the same directory
 
-from model import SingerClassifier  # Import your actual model class from model.py
+def find_min_length(directory):
+    min_length = float('inf')
+    for subdir, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith('.npy'):  # Making sure we only read '.npy' files
+                file_path = os.path.join(subdir, file)
+                data = np.load(file_path)
+                min_length = min(min_length, data.shape[1])
+    return min_length
 
-# Define your custom Dataset class.
 class SongsDataset(Dataset):
     def __init__(self, root_dir):
         self.root_dir = root_dir
-        self.files = []
+        self.songs = []
         self.labels = []
+        for label_dir in os.listdir(root_dir):
+            song_files = os.listdir(os.path.join(root_dir, label_dir))
+            for song_file in song_files:
+                self.songs.append(os.path.join(root_dir, label_dir, song_file))
+                self.labels.append(int(label_dir))
 
-        # Walk through the root directory and list all the paths of '.pkl' files.
-        for subdir, _, files in os.walk(self.root_dir):
-            for file in files:
-                if file.endswith(".pkl"):
-                    self.files.append(os.path.join(subdir, file))
-                    # The label is extracted as the folder name.
-                    label = int(os.path.basename(subdir))
-                    self.labels.append(label)
+        self.min_length = find_min_length(root_dir)
 
     def __len__(self):
-        return len(self.files)
+        return len(self.songs)
 
     def __getitem__(self, idx):
-        # Load the .pkl file.
-        pkl_file_path = self.files[idx]
-        
-        try:
-            with open(pkl_file_path, 'rb') as file:
-                data = pickle.load(file)
-        except (pickle.UnpicklingError, FileNotFoundError) as e:
-            print(f"Error loading {pkl_file_path}: {e}")
-            return None, None
-
-        # Get the label associated with the song.
+        song_path = self.songs[idx]
         label = self.labels[idx]
+        song_data = np.load(song_path)
 
-        # Convert data and label to torch tensors.
-        if data is not None:
-            song_data = torch.from_numpy(data).float()  # Ensure data is a float tensor
-            label = torch.tensor(label, dtype=torch.long)  # Ensure label is an integer.
-            return song_data, label
-        else:
-            return None, None
+        # Truncate or pad the sequence based on the minimum length
+        if song_data.shape[1] > self.min_length:
+            song_data = song_data[:, :self.min_length]
+        elif song_data.shape[1] < self.min_length:
+            padding = np.zeros((song_data.shape[0], self.min_length - song_data.shape[1]))
+            song_data = np.concatenate((song_data, padding), axis=1)
 
-def train_with_padding_and_trim(model, data_loader, criterion, optimizer, num_epochs):
-    # Training loop
+        song_data = torch.from_numpy(song_data).float()
+        return song_data, label
+
+def train_model(model, criterion, optimizer, train_loader, num_epochs=25):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Ensure our device is the desired one for training
+    
     for epoch in range(num_epochs):
-        for batch_idx, (data, target) in enumerate(data_loader):
-            if data is None:
-                continue  # Skip batches with loading errors
+        model.train()  # Set the model to training mode
+        running_loss = 0.0
 
-            data, target = data.to(device), target.to(device)
+        # Training step
+        for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)  # Move input and label tensors to the default device for training
+
+            # zero the parameter gradients
             optimizer.zero_grad()
-            output = model(data)
-            loss = criterion(output, target)
+
+            # forward + backward + optimize
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
 
-            print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {batch_idx+1}/{len(data_loader)}, Loss: {loss.item()}")
+            # print statistics
+            running_loss += loss.item()
+
+        epoch_loss = running_loss / len(train_loader)
+        print(f'Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss:.4f}')
+
+    print('Finished Training')
+
 
 def main():
-    # Preprocess the dataset
-    audio_features_directory = 'audio_features'  # Replace with your actual directory
-
-    # Set device for torch
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Create an instance of your model
-    model = SingerClassifier().to(device)
+    dataset = SongsDataset(root_dir='extracted_features')  # Specify your root directory
+    train_loader = DataLoader(dataset, batch_size=5, shuffle=True)
 
-    # Create instance of the dataset
-    dataset = SongsDataset(root_dir=audio_features_directory)
+    model_instance = model.SingerClassifier()
+    model_instance.to(device)
 
-    # Remove any None entries from the dataset (due to loading errors)
-    dataset = [data for data in dataset if data[0] is not None]
-
-    # Create DataLoader
-    data_loader = DataLoader(dataset, batch_size=16, shuffle=True)
-
-    # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters())
+    optimizer = Adam(model_instance.parameters(), lr=0.001)
 
-    # Training loop
-    num_epochs = 10
-    train_with_padding_and_trim(model, data_loader, criterion, optimizer, num_epochs)
+    train_model(model_instance, criterion, optimizer, train_loader, num_epochs=25)
 
 if __name__ == "__main__":
     main()
