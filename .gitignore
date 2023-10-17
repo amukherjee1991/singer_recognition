@@ -1,2 +1,6 @@
 songs/
 venv/
+pretrained_models/
+*.png
+*.wav
+*.csv

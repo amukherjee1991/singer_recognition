@@ -27,7 +27,7 @@ run-extractor:run-downloader
 	@echo "Running extractor"
 	python3.10 extractor.py
 
-run-model:run-extractor
+run-model:
 	@echo "Running model"
 	python3.10 model.py
 
